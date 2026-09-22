@@ -22,7 +22,6 @@
   font-family: "Optimistic Mono", ui-monospace, monospace;
 }
 </style>
-<meta name="robots" content="noindex, nofollow">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>盘面 V3 - 通达信式选股</title>
@@ -52,27 +51,6 @@
 </style>
 </head>
 <body>
-
-<div id="__gate__" style="position:fixed;inset:0;background:#0d1117;z-index:999999;display:flex;align-items:center;justify-content:center;font-family:-apple-system,BlinkMacSystemFont,sans-serif">
-  <div style="background:#151b23;border:1px solid #232b36;padding:28px;border-radius:16px;width:320px;text-align:center">
-    <div style="font-size:20px;margin-bottom:8px">🔒 盘面已加密</div>
-    <div style="font-size:12px;color:#8891a0;margin-bottom:16px">请输入访问密码</div>
-    <input id="__pwd__" type="password" placeholder="输入密码" style="width:100%;padding:12px;border-radius:10px;border:1px solid #30363d;background:#0d1117;color:#e6edf3;outline:none">
-    <button onclick="__checkPwd()" style="margin-top:12px;width:100%;padding:12px;background:#238636;color:#fff;border:0;border-radius:10px;font-weight:600;cursor:pointer">进入</button>
-    <div id="__msg__" style="color:#f85149;margin-top:10px;font-size:12px;min-height:16px"></div>
-  </div>
-</div>
-<script>
-const __MY_PWD__ = "8888";
-function __checkPwd(){
-  const v=document.getElementById('__pwd__').value;
-  if(v===__MY_PWD__){ localStorage.setItem('stock_gate_ok','1'); document.getElementById('__gate__').style.display='none'; }
-  else{ document.getElementById('__msg__').innerText='密码错误'; }
-}
-document.getElementById('__pwd__').addEventListener('keydown', e=>{ if(e.key==='Enter') __checkPwd(); });
-if(localStorage.getItem('stock_gate_ok')==='1'){ const g=document.getElementById('__gate__'); if(g) g.style.display='none'; }
-</script>
-
 <div id="app">
 <header style="display:flex;justify-content:space-between;padding:8px 2px 14px"><h1 style="margin:0;font-size:18px">盘面 V3 短线版</h1><div id="clock" style="font-size:12px;color:var(--dim)"></div></header>
 <div id="data-status" style="font-size:11px;color:var(--dim);display:flex;justify-content:space-between;margin-bottom:10px"><span id="data-status-text">数据检查中...</span><span id="data-status-detail"></span></div>
@@ -112,9 +90,10 @@ import {CONDITION_TEMPLATES, evaluateStock} from './conditions.js';
 
 const DATA_REPO = 'itssteepturn-lgtm/stock-data-v3'; // 改成 你的用户名/stock-data
 const CDN_BASE = `https://cdn.jsdelivr.net/gh/${DATA_REPO}@main`;
-const RAW_FALLBACK = `https://raw.githubusercontent.com/${DATA_REPO}/main`;
+const RAW_BASE = `https://raw.githubusercontent.com/${DATA_REPO}/main`;
+const RAW_FALLBACK = RAW_BASE;
 const DISPLAY=60, CALC=350;
-let DATA_BASE = CDN_BASE;
+let DATA_BASE = RAW_BASE; // 先用直连，解决CDN延迟
 
 // clock
 setInterval(()=>{ const d=new Date(); document.getElementById('clock').textContent=d.toLocaleTimeString(); },1000);
@@ -375,8 +354,13 @@ document.getElementById('run-scan-btn').onclick=async ()=>{
 
 // check data status
 async function checkStatus(){
+  async function tryFetch(base){
+    try{ const r=await fetch(`${base}/data/meta.json?t=${Date.now()}`); if(r.ok) return await r.json(); }catch{} return null;
+  }
   try{
-    const meta=await fetch(`${DATA_BASE}/data/meta.json?t=${Date.now()}`).then(r=>r.json());
+    let meta = await tryFetch(RAW_BASE) || await tryFetch(CDN_BASE);
+    if(!meta) throw new Error('no meta');
+
     document.getElementById('data-status-text').textContent=`数据：${meta.total}只 ${meta.lastUpdateDate}更新`;
     document.getElementById('data-status-detail').textContent=meta.note||'';
   }catch{
