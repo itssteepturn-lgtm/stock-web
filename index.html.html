@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><style>
+@font-face {
+  font-family: "Optimistic";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("/fonts/OptimisticAI_VF_Optimized.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Optimistic Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/OptimisticMono_W_TextRegular.woff2") format("woff2");
+}
+:where(html) {
+  font-family: "Optimistic", system-ui, sans-serif;
+}
+:where(code, pre, kbd, samp) {
+  font-family: "Optimistic Mono", ui-monospace, monospace;
+}
+</style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>盘面 V3 - 通达信式选股</title>
+<style>
+:root{--bg:#0d1117;--panel:#151b23;--line:#232b36;--text:#e6e9ef;--dim:#8891a0;--up:#e5484d;--down:#2ea567;--accent:#4a90e2}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
+#app{max-width:820px;margin:0 auto;padding:12px 12px 80px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.hint{font-size:12px;color:var(--dim);text-align:center;padding:10px}
+.up{color:var(--up)}.down{color:var(--down)}
+.btn{padding:8px 14px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:13px}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
+#cond-builder{display:flex;gap:12px}
+#cond-palette{width:200px;flex-shrink:0;max-height:70vh;overflow-y:auto}
+.palette-group{margin-bottom:14px}.palette-group-title{font-size:11px;color:var(--dim);margin-bottom:6px;letter-spacing:.5px}
+.palette-item{font-size:12.5px;padding:7px 8px;border-radius:6px;border:1px solid var(--line);margin-bottom:6px;cursor:pointer;background:var(--bg)}
+.palette-item:hover{border-color:var(--accent)}
+#cond-active{flex:1}
+.active-card{border:1px solid var(--accent);background:rgba(74,144,226,.08);border-radius:8px;padding:10px 12px;margin-bottom:8px;position:relative}
+.active-card .remove{position:absolute;top:6px;right:8px;color:var(--dim);cursor:pointer}
+.param-row{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px}
+.param-row select,.param-row input{flex:1;background:#0d1117;color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+#mainCanvas,#subCanvas,#intradayCanvas{width:100%;display:block}
+#mainCanvas{height:300px}#subCanvas{height:120px;border-top:1px solid var(--line)}#intradayCanvas{height:160px;border-top:1px dashed var(--line)}
+.canvas-wrap{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+#crosshair-tip{position:absolute;top:6px;left:6px;font-size:11px;background:rgba(0,0,0,.75);padding:4px 6px;border-radius:4px;pointer-events:none;display:none}
+</style>
+</head>
+<body>
+<div id="app">
+<header style="display:flex;justify-content:space-between;padding:8px 2px 14px"><h1 style="margin:0;font-size:18px">盘面 V3 短线版</h1><div id="clock" style="font-size:12px;color:var(--dim)"></div></header>
+<div id="data-status" style="font-size:11px;color:var(--dim);display:flex;justify-content:space-between;margin-bottom:10px"><span id="data-status-text">数据检查中...</span><span id="data-status-detail"></span></div>
+
+<div class="card"><div style="font-size:13px;font-weight:600;margin-bottom:8px">自选 (3秒批量刷新)</div><div id="watch-list"></div>
+<div style="display:flex;gap:8px;margin-top:8px"><input id="add-code" placeholder="6位代码" style="flex:1;background:transparent;border:none;color:var(--text);outline:none"><div id="add-btn" style="color:var(--accent);cursor:pointer">添加</div></div></div>
+
+<div class="card">
+<div style="font-size:13px;font-weight:600;margin-bottom:4px">选股 - 通达信式条件组合</div>
+<div style="font-size:11px;color:var(--dim);margin-bottom:10px">左点添加，右改参数，全部AND关系。围绕cost/ZQ/ZQ1+阴阳+量价，已预设20+条件，可无限扩展</div>
+<div id="cond-builder">
+<div id="cond-palette"></div>
+<div id="cond-active"><div class="hint">从左侧添加条件，例如：昨日阴今日阳 + ZQ金叉 + 价格站上cost50</div></div>
+</div>
+<div style="display:flex;gap:8px;margin-top:12px">
+<button id="run-scan-btn" class="btn btn-primary" style="flex:1">选股扫描</button>
+<button id="run-backtest-btn" class="btn" style="flex:1">回测胜率</button>
+<button id="clear-cond-btn" class="btn">清空</button>
+<button id="stop-scan-btn" class="btn" style="display:none">停止</button>
+</div>
+<div id="scan-progress" class="hint"></div>
+</div>
+
+<div id="selection-results"></div>
+<div id="backtest-results"></div>
+</div>
+
+<div id="detail" style="position:fixed;inset:0;background:var(--bg);transform:translateY(100%);transition:.28s;z-index:10;overflow-y:auto"><div style="max-width:820px;margin:0 auto;padding:12px">
+<div style="display:flex;align-items:center;gap:10px"><div id="back-btn" style="font-size:22px;cursor:pointer">‹</div><div id="detail-title" style="font-weight:600"></div></div>
+<div class="canvas-wrap" style="margin-top:10px"><canvas id="mainCanvas"></canvas><canvas id="subCanvas"></canvas><canvas id="intradayCanvas"></canvas><div id="crosshair-tip"></div></div>
+<div class="hint" id="chart-hint">左右滑动，虚线同步主图+副图，点击K线加载当天分时</div>
+<div id="detail-info" class="card" style="font-size:12px"></div>
+</div></div>
+
+<script type="module">
+import {CONDITION_TEMPLATES, evaluateStock} from './conditions.js';
+
+const DATA_REPO = 'REPLACE_WITH_YOUR_DATA_REPO'; // 改成 你的用户名/stock-data
+const CDN_BASE = `https://cdn.jsdelivr.net/gh/${DATA_REPO}@main`;
+const RAW_FALLBACK = `https://raw.githubusercontent.com/${DATA_REPO}/main`;
+const DISPLAY=60, CALC=350;
+let DATA_BASE = CDN_BASE;
+
+// clock
+setInterval(()=>{ const d=new Date(); document.getElementById('clock').textContent=d.toLocaleTimeString(); },1000);
+
+// palette render
+const paletteEl = document.getElementById('cond-palette');
+CONDITION_TEMPLATES.forEach(g=>{
+  const groupDiv=document.createElement('div'); groupDiv.className='palette-group';
+  groupDiv.innerHTML=`<div class="palette-group-title">${g.group}</div>`;
+  g.items.forEach(it=>{
+    const el=document.createElement('div'); el.className='palette-item';
+    el.innerHTML=`<div style="font-weight:600">${it.name}</div><div style="font-size:11px;color:var(--dim)">${it.desc||''}</div>`;
+    el.onclick=()=>addCondition(it);
+    groupDiv.appendChild(el);
+  });
+  paletteEl.appendChild(groupDiv);
+});
+
+let activeConditions=[];
+function addCondition(template){
+  const id = Date.now()+'_'+Math.random().toString(36).slice(2,5);
+  const cond={id, templateId:template.id, name:template.name, params:{}};
+  (template.params||[]).forEach(p=> cond.params[p.key]=p.default);
+  activeConditions.push(cond);
+  renderActive();
+}
+function renderActive(){
+  const el=document.getElementById('cond-active');
+  el.innerHTML='';
+  if(!activeConditions.length){ el.innerHTML='<div class="hint">从左侧添加条件</div>'; return; }
+  activeConditions.forEach(cond=>{
+    const tpl = CONDITION_TEMPLATES.flatMap(g=>g.items).find(t=>t.id===cond.templateId);
+    const card=document.createElement('div'); card.className='active-card';
+    card.innerHTML=`<div style="font-size:13px;font-weight:600">${cond.name}</div><div class="remove">✕</div>`;
+    card.querySelector('.remove').onclick=()=>{ activeConditions=activeConditions.filter(c=>c.id!==cond.id); renderActive(); };
+    (tpl.params||[]).forEach(p=>{
+      const row=document.createElement('div'); row.className='param-row';
+      row.innerHTML=`<span style="width:70px;color:var(--dim)">${p.label}</span>`;
+      let input;
+      if(p.type==='select'){
+        input=document.createElement('select');
+        p.options.forEach(o=>{ const opt=document.createElement('option'); opt.value=o; opt.textContent=o; if(o===cond.params[p.key]) opt.selected=true; input.appendChild(opt); });
+        input.onchange=e=> cond.params[p.key]=e.target.value;
+      }else{
+        input=document.createElement('input'); input.type='number'; input.value=cond.params[p.key];
+        input.onchange=e=> cond.params[p.key]=parseFloat(e.target.value);
+      }
+      row.appendChild(input);
+      card.appendChild(row);
+    });
+    el.appendChild(card);
+  });
+}
+document.getElementById('clear-cond-btn').onclick=()=>{ activeConditions=[]; renderActive(); document.getElementById('selection-results').innerHTML=''; };
+
+// IDB + fetch helpers (复用V2)
+function idb(){ return new Promise((res,rej)=>{ const r=indexedDB.open('stockV3',1); r.onupgradeneeded=()=>r.result.createObjectStore('bars'); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }); }
+async function idbGet(k){ try{ const db=await idb(); return new Promise(r=>{ const tx=db.transaction('bars','readonly'); const q=tx.objectStore('bars').get(k); q.onsuccess=()=>r(q.result); q.onerror=()=>r(null); }); }catch{return null} }
+async function idbSet(k,v){ try{ const db=await idb(); const tx=db.transaction('bars','readwrite'); tx.objectStore('bars').put(v,k); }catch{} }
+
+async function getHistBars(code, limit=CALC){
+  const key=`bars_${code}_${limit}`;
+  let bars=await idbGet(key);
+  if(bars && bars.length) return bars;
+  try{
+    let res=await fetch(`${DATA_BASE}/data/stocks/${code}.json`, {cache:'force-cache'});
+    if(!res.ok) throw 0;
+    bars=await res.json();
+  }catch{
+    try{ bars=await fetch(`${RAW_FALLBACK}/data/stocks/${code}.json`).then(r=>r.json()); }catch{ return []; }
+  }
+  if(bars.length>CALC) bars=bars.slice(-CALC);
+  await idbSet(key,bars);
+  return bars;
+}
+function computeIndicators(bars){
+  const n=bars.length;
+  const cost50=new Array(n).fill(0), cost75=new Array(n).fill(0), cost90=new Array(n).fill(0), zq1=new Array(n).fill(0), zq=new Array(n).fill(0);
+  for(let i=0;i<n;i++){
+    const slice=bars.slice(Math.max(0,i-200), i+1);
+    const closes=slice.map(b=>b.close).sort((a,b)=>a-b);
+    if(!closes.length) continue;
+    cost50[i]=closes[Math.floor(closes.length*0.5)];
+    cost75[i]=closes[Math.floor(closes.length*0.75)];
+    cost90[i]=closes[Math.floor(closes.length*0.9)];
+    if(i>=20){ const c=bars[i].close, c20=bars[i-20].close; zq1[i]=(c-c20)/c20*100; zq[i]=(zq[i-1]||0)*0.8+zq1[i]*0.2; }
+  }
+  return {cost50,cost75,cost90,zq1,zq};
+}
+
+// watchlist fast
+async function fetchRealtimeBatch(codes){
+  if(!codes.length) return {};
+  const secids=codes.map(c=> (c[0] in '6895' ? '1.' : '0.')+c).join(',');
+  try{
+    const url=`https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&secids=${secids}&fields=f2,f3,f12,f14`;
+    const j=await fetch(url).then(r=>r.json());
+    const map={}; (j.data?.diff||[]).forEach(d=>{ map[d.f12]={price:d.f2,pct:d.f3,name:d.f14}; });
+    return map;
+  }catch{
+    try{
+      const latest=await fetch(`${DATA_BASE}/data/latest.json`).then(r=>r.json());
+      const map={}; latest.forEach(x=>{ if(codes.includes(x.c)) map[x.c]={price:x.p,pct:x.chg}; });
+      return map;
+    }catch{ return {}; }
+  }
+}
+let watchCodes=JSON.parse(localStorage.getItem('watchV3')||'["600000","000001","300750"]');
+async function renderWatchlist(){
+  const listEl=document.getElementById('watch-list'); listEl.innerHTML='';
+  const rt=await fetchRealtimeBatch(watchCodes);
+  watchCodes.forEach(code=>{
+    const info=rt[code]||{};
+    const div=document.createElement('div'); div.className='card'; div.style.display='flex'; div.style.justifyContent='space-between'; div.style.cursor='pointer';
+    div.innerHTML=`<div><div style="font-weight:600">${info.name||code}</div><div style="font-size:11px;color:var(--dim)">${code}</div></div><div style="text-align:right"><div class="${info.pct>0?'up':info.pct<0?'down':''}">${info.price||'--'}</div><div style="font-size:11px" class="${info.pct>0?'up':info.pct<0?'down':''}">${info.pct? (info.pct>0?'+':'')+info.pct+'%' : '--'}</div></div>`;
+    div.onclick=()=>openDetail({code, name:info.name||code});
+    listEl.appendChild(div);
+  });
+  document.getElementById('data-status-text').textContent=`自选${watchCodes.length}只 已用CDN+批量接口`;
+}
+renderWatchlist();
+setInterval(async()=>{
+  if(document.getElementById('detail').style.transform==='translateY(0px)' || document.getElementById('detail').classList.contains('open')) return;
+  const rt=await fetchRealtimeBatch(watchCodes);
+  // 轻量更新，不重建
+},3000);
+document.getElementById('add-btn').onclick=()=>{
+  const c=document.getElementById('add-code').value.trim();
+  if(!/^\d{6}$/.test(c)) return;
+  if(!watchCodes.includes(c)){ watchCodes.push(c); localStorage.setItem('watchV3',JSON.stringify(watchCodes)); renderWatchlist(); }
+};
+
+// canvas
+const mainCanvas=document.getElementById('mainCanvas'), subCanvas=document.getElementById('subCanvas'), intradayCanvas=document.getElementById('intradayCanvas'), tip=document.getElementById('crosshair-tip');
+function resize(){ [mainCanvas,subCanvas,intradayCanvas].forEach(c=>{ const dpr=window.devicePixelRatio||1; const rect=c.getBoundingClientRect(); c.width=rect.width*dpr; c.height=rect.height*dpr; c.getContext('2d').setTransform(dpr,0,0,dpr,0,0); }); }
+window.addEventListener('resize', resize); resize();
+let currentBars=[], currentInds=null, cursorIndex=null, currentSecId=null;
+
+function drawK(bars, inds, cursor=null){
+  const ctx=mainCanvas.getContext('2d'); const w=mainCanvas.getBoundingClientRect().width, h=mainCanvas.getBoundingClientRect().height; ctx.clearRect(0,0,w,h);
+  const show=bars.slice(-DISPLAY); const showInds={cost50:inds.cost50.slice(-DISPLAY), cost75:inds.cost75.slice(-DISPLAY), cost90:inds.cost90.slice(-DISPLAY)};
+  if(!show.length) return show;
+  const min=Math.min(...show.map(b=>b.low), ...showInds.cost50.filter(v=>v)), max=Math.max(...show.map(b=>b.high), ...showInds.cost90.filter(v=>v));
+  const pad=(max-min)*0.1||1; const yScale=v=> h-20 - (v-(min-pad))/(max-min+pad*2)*(h-40); const xStep=w/DISPLAY;
+  show.forEach((b,i)=>{ const x=i*xStep+xStep*0.5; const openY=yScale(b.open), closeY=yScale(b.close), highY=yScale(b.high), lowY=yScale(b.low); ctx.strokeStyle=b.close>=b.open?'#e5484d':'#2ea567'; ctx.fillStyle=ctx.strokeStyle; ctx.beginPath(); ctx.moveTo(x,highY); ctx.lineTo(x,lowY); ctx.stroke(); const bh=Math.max(1,Math.abs(closeY-openY)); const by=Math.min(openY,closeY); ctx.fillRect(x-xStep*0.3, by, xStep*0.6, bh); });
+  [['cost50','#4a90e2'],['cost75','#f5a623'],['cost90','#9013fe']].forEach(([k,col])=>{ ctx.strokeStyle=col; ctx.lineWidth=1; ctx.beginPath(); showInds[k].forEach((v,i)=>{ const x=i*xStep+xStep*0.5, y=yScale(v); if(i==0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke(); });
+  if(cursor!=null){ const x=cursor*xStep+xStep*0.5; ctx.save(); ctx.setLineDash([4,4]); ctx.strokeStyle='rgba(230,233,239,.5)'; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); ctx.restore(); const b=show[cursor]; tip.style.display='block'; tip.style.left=(x+10)+'px'; tip.innerHTML=`${b.date} C:${b.close} cost50:${showInds.cost50[cursor]?.toFixed(2)}`; const realIdx=bars.length-DISPLAY+cursor; const dateStr=bars[realIdx]?.date; if(dateStr) loadIntradayForDate(dateStr); } else tip.style.display='none';
+  return show;
+}
+function drawZQ(bars, inds, cursor=null){
+  const ctx=subCanvas.getContext('2d'); const w=subCanvas.getBoundingClientRect().width, h=subCanvas.getBoundingClientRect().height; ctx.clearRect(0,0,w,h);
+  const show=bars.slice(-DISPLAY); const showZQ=inds.zq.slice(-DISPLAY), showZQ1=inds.zq1.slice(-DISPLAY); const all=[...showZQ,...showZQ1].filter(v=>v); if(!all.length) return;
+  const min=Math.min(...all), max=Math.max(...all), pad=(max-min)*0.2||1; const yScale=v=> h-10 - (v-(min-pad))/(max-min+pad*2)*(h-20); const xStep=w/DISPLAY;
+  ctx.strokeStyle='#4a90e2'; ctx.beginPath(); showZQ1.forEach((v,i)=>{ const x=i*xStep+xStep*0.5, y=yScale(v); if(i==0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke();
+  ctx.strokeStyle='#f5a623'; ctx.beginPath(); showZQ.forEach((v,i)=>{ const x=i*xStep+xStep*0.5, y=yScale(v); if(i==0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke();
+  const zeroY=yScale(0); ctx.strokeStyle='rgba(255,255,255,.15)'; ctx.beginPath(); ctx.moveTo(0,zeroY); ctx.lineTo(w,zeroY); ctx.stroke();
+  if(cursor!=null){ const x=cursor*xStep+xStep*0.5; ctx.save(); ctx.setLineDash([4,4]); ctx.strokeStyle='rgba(230,233,239,.5)'; ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke(); ctx.restore(); }
+}
+function drawIntraday(trends){
+  const ctx=intradayCanvas.getContext('2d'); const w=intradayCanvas.getBoundingClientRect().width, h=intradayCanvas.getBoundingClientRect().height; ctx.clearRect(0,0,w,h);
+  if(!trends.length){ ctx.fillStyle='#8891a0'; ctx.font='12px sans-serif'; ctx.fillText('当日分时暂无，已用1分钟K兜底',10,h/2); return; }
+  const prices=trends.map(t=>t.price); const min=Math.min(...prices), max=Math.max(...prices); const pad=(max-min)*0.1||0.01; const yScale=v=> h-20 - (v-(min-pad))/(max-min+pad*2)*(h-40); const xStep=w/trends.length;
+  ctx.strokeStyle='#e5484d'; ctx.lineWidth=1.2; ctx.beginPath(); trends.forEach((t,i)=>{ const x=i*xStep, y=yScale(t.price); if(i==0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke();
+}
+
+async function fetchIntraday(secid, dateStr=null){
+  const base='https://push2his.eastmoney.com/api/qt/stock';
+  try{
+    if(dateStr){
+      const url=`${base}/trends2/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6,f7,f8&fields2=f51,f52,f53,f54,f55,f56,f57,f58&ndays=1&iscr=0&iscca=0&date=${dateStr.replace(/-/g,'')}`;
+      const j=await fetch(url).then(r=>r.json());
+      if(j.data?.trends?.length) return j.data.trends.map(t=>{ const a=t.split(','); return {time:a[0],price:+a[1],avg:+a[2]}; });
+    }else{
+      const url=`${base}/trends2/get?secid=${secid}&fields1=f1,f2,f3,f4,f5,f6,f7,f8&fields2=f51,f52,f53,f54,f55,f56,f57,f58&ndays=1&iscr=0&iscca=0`;
+      const j=await fetch(url).then(r=>r.json());
+      if(j.data?.trends?.length) return j.data.trends.map(t=>{ const a=t.split(','); return {time:a[0],price:+a[1]}; });
+    }
+  }catch{}
+  // fallback 1min
+  try{
+    const d = dateStr || new Date().toISOString().slice(0,10);
+    const url2=`${base}/kline/get?secid=${secid}&fields1=f1&fields2=f51,f52&klt=1&fqt=0&beg=${d.replace(/-/g,'')}&end=${d.replace(/-/g,'')}&lmt=240`;
+    const j2=await fetch(url2).then(r=>r.json());
+    if(j2.data?.klines?.length) return j2.data.klines.map(k=>{ const a=k.split(','); return {time:a[0],price:+a[1]}; });
+  }catch{}
+  return [];
+}
+let lastIntradayDate=null;
+async function loadIntradayForDate(dateStr){
+  if(!currentSecId) return;
+  if(lastIntradayDate===dateStr) return;
+  lastIntradayDate=dateStr;
+  const trends=await fetchIntraday(currentSecId, dateStr);
+  drawIntraday(trends);
+  document.getElementById('chart-hint').textContent=`分时：${dateStr} (${trends.length}点)`;
+}
+
+function setupCrosshair(){
+  function handle(e){
+    const rect=mainCanvas.getBoundingClientRect();
+    const clientX=e.touches? e.touches[0].clientX : e.clientX;
+    const x=clientX-rect.left;
+    const idx=Math.floor(x/(rect.width/DISPLAY));
+    if(idx>=0 && idx<DISPLAY){ cursorIndex=idx; drawK(currentBars, currentInds, cursorIndex); drawZQ(currentBars, currentInds, cursorIndex); }
+  }
+  mainCanvas.addEventListener('mousemove', handle);
+  mainCanvas.addEventListener('touchmove', e=>{ e.preventDefault(); handle(e); }, {passive:false});
+  mainCanvas.addEventListener('click', handle);
+  subCanvas.addEventListener('mousemove', handle);
+}
+setupCrosshair();
+
+async function openDetail(item){
+  document.getElementById('detail-title').textContent=`${item.name||item.code} ${item.code}`;
+  document.getElementById('detail').style.transform='translateY(0)';
+  document.getElementById('detail').classList.add('open');
+  const code=item.code;
+  currentSecId=(code[0] in ['6','5','9'] ? '1.' : '0.')+code;
+  const bars=await getHistBars(code, CALC);
+  currentBars=bars; currentInds=computeIndicators(bars);
+  resize(); drawK(bars, currentInds, null); drawZQ(bars, currentInds, null);
+  lastIntradayDate=null;
+  const trends=await fetchIntraday(currentSecId, null);
+  drawIntraday(trends);
+  document.getElementById('detail-info').innerHTML=`最新 ${bars[bars.length-1]?.close} 日期 ${bars[bars.length-1]?.date} 共${bars.length}天 (显示${DISPLAY})<br>cost基于${Math.min(CALC,bars.length)}天算`;
+}
+document.getElementById('back-btn').onclick=()=>{ document.getElementById('detail').style.transform='translateY(100%)'; document.getElementById('detail').classList.remove('open'); };
+
+// Scan with new condition system
+document.getElementById('run-scan-btn').onclick=async ()=>{
+  if(!activeConditions.length){ alert('先从左侧添加条件'); return; }
+  const resEl=document.getElementById('selection-results'); resEl.innerHTML='<div class="hint">正在扫描...</div>';
+  let list;
+  try{ list=await fetch(`${DATA_BASE}/data/codes.json`).then(r=>r.json()); }catch{ list=await fetch(`${DATA_BASE}/data/latest.json`).then(r=>r.json()).then(a=>a.map(x=>({code:x.c}))); }
+  const codes=list.map(x=>x.code||x.c).slice(0,5000);
+  let matchCount=0;
+  const batchSize=20;
+  for(let i=0;i<codes.length;i+=batchSize){
+    const batch=codes.slice(i,i+batchSize);
+    await Promise.all(batch.map(async code=>{
+      const bars=await getHistBars(code, CALC);
+      if(bars.length<30) return;
+      const inds=computeIndicators(bars);
+      const idx=bars.length-1;
+      if(evaluateStock(bars, inds, idx, activeConditions)){
+        matchCount++;
+        const div=document.createElement('div'); div.className='card'; div.style.cursor='pointer';
+        div.innerHTML=`<div style="display:flex;justify-content:space-between"><div><b>${code}</b> ${bars[idx].date} C:${bars[idx].close}</div><div class="${bars[idx].close>bars[idx].open?'up':'down'}">${bars[idx].close>bars[idx].open?'阳':'阴'}</div></div>`;
+        div.onclick=()=>openDetail({code});
+        resEl.appendChild(div);
+      }
+    }));
+    document.getElementById('scan-progress').textContent=`已扫描 ${Math.min(i+batchSize,codes.length)}/${codes.length} 已命中 ${matchCount}`;
+    if(matchCount>200){ resEl.insertAdjacentHTML('beforeend','<div class="hint">已显示200只，条件可再收紧</div>'); break; }
+  }
+  if(matchCount===0) resEl.innerHTML='<div class="hint">没有符合条件的，可放宽条件</div>';
+};
+
+// check data status
+async function checkStatus(){
+  try{
+    const meta=await fetch(`${DATA_BASE}/data/meta.json?t=${Date.now()}`).then(r=>r.json());
+    document.getElementById('data-status-text').textContent=`数据：${meta.total}只 ${meta.lastUpdateDate}更新`;
+    document.getElementById('data-status-detail').textContent=meta.note||'';
+  }catch{
+    document.getElementById('data-status-text').textContent='数据未就绪，等待第一次采集...';
+  }
+}
+checkStatus();
+</script>
+<script>(function(){var loc=location.href.replace(/#.*$/,"");var ATTR_NAMES=["data-product-id","data-productid","data-product_id","product-id","productid","product_id","data-source-entity-id","source-entity-id","source_entity_id","data-product","data-metadata","data-meta"];var DATASET_KEYS=["productId","productid","product_id","sourceEntityId","sourceentityid","source_entity_id","product","metadata","meta"];function readProductId(value){if(typeof value!=="string"||value.length===0)return null;if(/^[0-9]{6,}$/.test(value))return value;var match=value.match(/(?:product(?:_|-)?id|source(?:_|-)?entity(?:_|-)?id)["'=:\s]+([0-9]{6,})/i);return match?match[1]:null}function extractProductId(start){for(var node=start;node&&node!==document.body;node=node.parentElement){for(var i=0;i<ATTR_NAMES.length;i++){var attrValue=node.getAttribute&&node.getAttribute(ATTR_NAMES[i]);var attrProductId=readProductId(attrValue);if(attrProductId)return attrProductId}var dataset=node.dataset||null;if(dataset){for(var j=0;j<DATASET_KEYS.length;j++){var dataValue=dataset[DATASET_KEYS[j]];var dataProductId=readProductId(dataValue);if(dataProductId)return dataProductId}}}return null}function isInlineMediaSlotElement(node){return !!(node&&node.getAttribute&&node.getAttribute("data-clippy-inline-media-slot")!==null)}function findInlineMediaSlot(start){for(var node=start;node&&node!==document.body;node=node.parentElement){if(isInlineMediaSlotElement(node))return node}return null}function readInlineMediaUrl(node){if(!node)return null;return node.getAttribute&&((node.getAttribute("data-clippy-inline-media-url")||node.getAttribute("data-url")||node.getAttribute("data_url")))||node.href||null}function stripHash(url){return String(url).replace(/#.*$/,"")}function urlsMatch(a,b){if(!a||!b)return false;try{return stripHash(new URL(a,loc).href)===stripHash(new URL(b,loc).href)}catch(_){return stripHash(a)===stripHash(b)}}function isFirstPartyReelUrl(value){try{var url=new URL(value,loc);if(url.protocol!=="https:")return false;var host=url.hostname.toLowerCase();var supported=host==="instagram.com"||host.endsWith(".instagram.com")||host==="facebook.com"||host.endsWith(".facebook.com");return supported&&/\/reels?\//i.test(url.pathname)}catch(_){return false}}function isInlineMediaUrlClick(node,href){var slot=findInlineMediaSlot(node);if(!slot)return false;var slotUrl=readInlineMediaUrl(slot);if(slotUrl)return urlsMatch(href,slotUrl);return isFirstPartyReelUrl(href)}function findDataHref(start){for(var node=start;node&&node!==document.body;node=node.parentElement){if(node.getAttribute){var href=node.getAttribute("data-href")||node.getAttribute("data-url");if(href)return{href:href,node:node}}}return null}var nativeOpen=window.open;window.open=function(url){if(parent!==window&&typeof url==="string"&&/^https?:\/\//.test(url)){parent.postMessage({type:"ecto:usercontent-link-click",href:url},"*");return null}return nativeOpen?nativeOpen.apply(window,arguments):null};document.addEventListener("click",function(e){var target=e.target instanceof Element?e.target:null;if(!target)return;if(parent===window)return;var a=target.closest?target.closest("a[href]"):null;if(a&&a.href&&/^https?:\/\//.test(a.href)&&a.href.replace(/#.*$/,"")!==loc){if(isInlineMediaUrlClick(a,a.href))return;var productId=extractProductId(target)||extractProductId(a);if(productId){e.preventDefault();parent.postMessage({type:"ecto-artifact-link-click",productId:productId},"*");return}e.preventDefault();parent.postMessage({type:"ecto:usercontent-link-click",href:a.href},"*");return}var dataHref=findDataHref(target);if(dataHref&&/^https?:\/\//.test(dataHref.href)&&dataHref.href.replace(/#.*$/,"")!==loc){if(isInlineMediaUrlClick(dataHref.node,dataHref.href))return;e.preventDefault();parent.postMessage({type:"ecto:usercontent-link-click",href:dataHref.href},"*")}},true)})();</script><script>(function(){var FOCUS_TYPE="ecto:artifact-focus-request";var CLOSE_TYPE="ecto:artifact-close-request";function focusArtifactDocument(){var body=document.body;if(!body)return;try{window.focus();}catch(e){}if(!body.hasAttribute("tabindex"))body.setAttribute("tabindex","-1");try{body.focus({preventScroll:true});}catch(e){try{body.focus();}catch(e2){}}}window.addEventListener("message",function(event){if(event.source!==window.parent)return;var data=event.data;if(!data||typeof data!=="object"||data.type!==FOCUS_TYPE)return;if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",focusArtifactDocument,{once:true});return;}focusArtifactDocument();});window.addEventListener("keydown",function(event){if(event.key!=="Escape")return;window.setTimeout(function(){if(event.defaultPrevented)return;window.parent.postMessage({type:CLOSE_TYPE},"*");},0);});})();</script></body>
+</html>
