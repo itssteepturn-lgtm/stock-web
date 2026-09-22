@@ -55,6 +55,16 @@
 <header style="display:flex;justify-content:space-between;padding:8px 2px 14px"><h1 style="margin:0;font-size:18px">盘面 V3 短线版</h1><div id="clock" style="font-size:12px;color:var(--dim)"></div></header>
 <div id="data-status" style="font-size:11px;color:var(--dim);display:flex;justify-content:space-between;margin-bottom:10px"><span id="data-status-text">数据检查中...</span><span id="data-status-detail"></span></div>
 
+
+<div id="index-panel" class="card" style="padding:10px 12px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <div style="font-size:13px;font-weight:700">大盘温度 · 5指</div>
+    <div id="index-update-time" style="font-size:11px;color:var(--dim)">指数加载中...</div>
+  </div>
+  <div id="index-grid" style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px">
+  </div>
+</div>
+
 <div class="card"><div style="font-size:13px;font-weight:600;margin-bottom:8px">自选 (3秒批量刷新)</div><div id="watch-list"></div>
 <div style="display:flex;gap:8px;margin-top:8px"><input id="add-code" placeholder="6位代码" style="flex:1;background:transparent;border:none;color:var(--text);outline:none"><div id="add-btn" style="color:var(--accent);cursor:pointer">添加</div></div></div>
 
@@ -351,6 +361,95 @@ document.getElementById('run-scan-btn').onclick=async ()=>{
   }
   if(matchCount===0) resEl.innerHTML='<div class="hint">没有符合条件的，可放宽条件</div>';
 };
+
+
+// ---- 5大指数 mini K ----
+const INDICES = [
+  {name:'上证', code:'000001', secid:'1.000001'},
+  {name:'深证', code:'399001', secid:'0.399001'},
+  {name:'创业', code:'399006', secid:'0.399006'},
+  {name:'科创50', code:'000688', secid:'1.000688'},
+  {name:'北证50', code:'899050', secid:'0.899050'},
+];
+
+async function fetchIndexSnapshot(secid){
+  // 东财实时快照
+  try{
+    const url=`https://push2.eastmoney.com/api/qt/stock/get?secid=${secid}&fields=f43,f44,f45,f46,f60`;
+    const j=await fetch(url).then(r=>r.json());
+    const d=j?.data;
+    if(!d) return null;
+    return {price:d.f43, prev:d.f60, chgPct:(d.f43-d.f60)/d.f60*100, name:d.f58||''};
+  }catch{return null;}
+}
+async function fetchIndexKline(secid, lmt=60){
+  try{
+    const url=`https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}&klt=101&fqt=1&lmt=${lmt}&fields2=f51,f52,f53,f54,f55,f56`;
+    const j=await fetch(url).then(r=>r.json());
+    const klines=j?.data?.klines||[];
+    return klines.map(k=>{ const a=k.split(','); return {close:+a[2]}; });
+  }catch{return [];}
+}
+function drawSpark(canvas, bars, isUp){
+  if(!canvas || !bars.length) return;
+  const ctx=canvas.getContext('2d');
+  const dpr=window.devicePixelRatio||1;
+  const w=canvas.clientWidth, h=canvas.clientHeight;
+  canvas.width=w*dpr; canvas.height=h*dpr; ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,w,h);
+  const closes=bars.map(b=>b.close);
+  const min=Math.min(...closes), max=Math.max(...closes);
+  const pad=(max-min)*0.15||max*0.005;
+  const y=v=> h-4 - (v-(min-pad))/(max-min+pad*2||1)*(h-8);
+  const xStep=w/(closes.length-1||1);
+  // fill
+  ctx.beginPath(); ctx.moveTo(0,y(closes[0]));
+  closes.forEach((c,i)=> ctx.lineTo(i*xStep, y(c)));
+  ctx.lineTo(w, h); ctx.lineTo(0,h); ctx.closePath();
+  ctx.fillStyle=isUp?'rgba(229,72,77,.12)':'rgba(46,165,103,.12)'; ctx.fill();
+  // line
+  ctx.beginPath(); closes.forEach((c,i)=>{ const X=i*xStep, Y=y(c); if(i==0) ctx.moveTo(X,Y); else ctx.lineTo(X,Y); });
+  ctx.strokeStyle=isUp?'#e5484d':'#2ea567'; ctx.lineWidth=1.2; ctx.stroke();
+}
+async function renderIndices(){
+  const grid=document.getElementById('index-grid');
+  grid.innerHTML='';
+  const now=new Date().toLocaleTimeString();
+  document.getElementById('index-update-time').textContent=`${now} · 东财直连`;
+  for(const idx of INDICES){
+    const card=document.createElement('div');
+    card.style.cssText='background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 8px 6px;cursor:pointer';
+    card.innerHTML=`
+      <div style="font-size:11px;color:var(--dim);display:flex;justify-content:space-between"><span>${idx.name}</span><span>${idx.code}</span></div>
+      <div style="font-size:14px;font-weight:700;margin:4px 0" id="p_${idx.code}">--</div>
+      <div style="font-size:11px" id="c_${idx.code}">--</div>
+      <canvas id="spark_${idx.code}" style="width:100%;height:32px;display:block;margin-top:4px"></canvas>
+    `;
+    grid.appendChild(card);
+    // async load
+    (async ()=>{
+      const [snap, kl]=await Promise.all([fetchIndexSnapshot(idx.secid), fetchIndexKline(idx.secid, 60)]);
+      const pEl=document.getElementById(`p_${idx.code}`);
+      const cEl=document.getElementById(`c_${idx.code}`);
+      const canvas=document.getElementById(`spark_${idx.code}`);
+      if(snap && pEl){
+        const isUp=snap.price>=snap.prev;
+        pEl.textContent=snap.price.toFixed(2);
+        pEl.className=isUp?'up':'down';
+        const pct=(snap.chgPct||0).toFixed(2);
+        cEl.textContent=`${pct>0?'+':''}${pct}%`;
+        cEl.className=isUp?'up':'down';
+        drawSpark(canvas, kl, isUp);
+      }else if(kl.length){
+        drawSpark(canvas, kl, kl[kl.length-1].close>=kl[0].close);
+        if(pEl) pEl.textContent=kl[kl.length-1].close.toFixed(2);
+      }
+    })();
+    card.onclick=()=>openDetail({code:idx.code, name:idx.name});
+  }
+}
+renderIndices();
+setInterval(renderIndices, 60*1000);
 
 // check data status
 async function checkStatus(){
